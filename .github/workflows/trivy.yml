@@ -56,7 +56,7 @@ jobs:
             "$NGINX_IMAGE"
           do
 
-            if ! grep -Fxq "$expected" <<< "$iamges"; then
+            if ! grep -Fxq "$expected" <<< "$images"; then
               echo "::error::Compose does not declare image: $expected"
               exit 1
             fi
