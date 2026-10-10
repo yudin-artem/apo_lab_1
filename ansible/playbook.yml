@@ -1,0 +1,131 @@
+- name: Configure VM and deploy the application
+  hosts: app
+  become: true
+
+  vars:
+    app_dir: /opt/lab-app
+
+    frontend_src: "{{ playbook_dir }}/../frontend/"
+    backend_src: "{{ playbook_dir }}/../backend/"
+    compose_src: "{{ playbook_dir }}/../docker-compose.yml"
+
+    nginx_port: 8080
+
+  tasks:
+    - name: Wait until VM is reachable over SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+    
+    - name: Install Docker Engine and Compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Enable and start Docker
+      ansible.builtin.systemd_service:
+        name: docker
+        state: started
+        enabled: true
+      
+    - name: Create application directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - "{{ app_dir }}"
+        - "{{ app_dir }}/frontend"
+        - "{{ app_dir }}/backend"
+        - "{{ app_dir }}/nginx"
+
+    - name: Copy Comopse config
+      ansible.builtin.copy:
+        src: "{{ compose_src }}"
+        dest: "{{ app_dir }}/compose.yaml"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Rebuild and start application
+
+    - name: Copy frontend source files
+      ansible.builtin.copy:
+        src: "{{ frontend_src }}"
+        dest: "{{ app_dir }}/frontend/"
+        owner: root
+        group: root
+      notify: Rebuild and start application
+
+    - name: Copy backend source files
+      ansible.builtin.copy:
+        src: "{{ backend_src }}"
+        dest: "{{ app_dir }}/backend/"
+        owner: root
+        group: root
+      notify: Rebuild and start application
+    
+    - name: Copy nginx configuration
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../nginx/nginx.conf"
+        dest: "{{ app_dir }}/nginx/nginx.conf"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Rebuild and start application
+
+    - name: Validate Compose config
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - config
+        chdir: "{{ app_dir }}"
+      changed_when: false
+
+    - name: Apply pending deployment handlers
+      ansible.builtin.meta: flush_handlers
+    
+    - name: Ensure Compose application is running
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_dir }}"
+        services:
+          - backend
+          - nginx
+        state: present
+        build: policy
+        timeout: 120
+        
+        
+    - name: Wait for nginx TCP port
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ nginx_port }}"
+        state: started
+        timeout: 120
+
+    - name: Check nginx HTTP response
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ nginx_port }}/"
+        method: GET
+        status_code:
+          - 200
+          - 301
+          - 302
+        return_content: false
+      register: frontend_response
+      retries: 10
+      delay: 5
+      until: frontend_response.status in [200, 201, 202]
+
+  handlers:
+    - name: Rebuild and start application
+      community.docker.docker_compose_v2:
+        project_src: "{{ app_dir }}"
+        state: present
+        build: always
+        timeout: 120
