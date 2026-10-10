@@ -17,3 +17,7 @@ crash.*.log
 # Local variable files
 terraform.tfvars
 *.auto.tfvars
+
+# Trivy scan reports
+trivy-reports/
+trivy_reports/
