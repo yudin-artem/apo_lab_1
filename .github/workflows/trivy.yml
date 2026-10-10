@@ -65,7 +65,7 @@ jobs:
           echo "Checking local images..."
 
           docker image inspect \
-            "$FRONTEND_IAMGE" \
+            "$FRONTEND_IMAGE" \
             "$BACKEND_IMAGE" \
             "$NGINX_IMAGE" > /dev/null
 
