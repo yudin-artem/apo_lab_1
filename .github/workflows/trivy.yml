@@ -23,7 +23,7 @@ jobs:
       COMPOSE_PROJECT_NAME: lab-app
       FRONTEND_IMAGE: lab-app-frontend:latest
       BACKEND_IMAGE: lab-app-backend:latest
-      NGINX_IMAGE: nginx:1.30-apline
+      NGINX_IMAGE: nginx:1.30-alpine
 
     steps:
       - name: Checkout repository
