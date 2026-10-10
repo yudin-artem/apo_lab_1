@@ -1,0 +1,222 @@
+name: Trivy image scan
+
+on:
+  push:
+    branches:
+      - main
+      
+  pull_request:
+    branches:
+      - main
+      
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan-images:
+    name: Build and scan Docker images
+    runs-on: ubuntu-24.04
+
+    env:
+      COMPOSE_PROJECT_NAME: lab-app
+      FRONTEND_IMAGE: lab-app-frontend:latest
+      BACKEND_IMAGE: lab-app-backend:latest
+      NGINX_IMAGE: nginx:1.30-alpine
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Validate Compose config
+        run: docker compose -f docker-compose.yml config
+
+      - name: Build frontend and backend images
+        run: docker compose -f docker-compose.yml build frontend backend
+      
+      - name: Pull Nginx image
+        run: docker compose -f docker-compose.yml pull nginx
+
+      - name: Verify image names
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Images deaclared by Docker Compose:"
+          images="$(docker compose -f docker-compose.yml config --images)"
+          printf '%s\n' "$images"
+
+          for expected in \
+            "$FRONTEND_IMAGE" \
+            "$BACKEND_IMAGE" \
+            "$NGINX_IMAGE"
+          do
+
+            if ! grep -Fxq "$expected" <<< "$images"; then
+              echo "::error::Compose does not declare image: $expected"
+              exit 1
+            fi
+          done
+
+          echo "Checking local images..."
+
+          docker image inspect \
+            "$FRONTEND_IMAGE" \
+            "$BACKEND_IMAGE" \
+            "$NGINX_IMAGE" > /dev/null
+
+          echo "All expected images exist."
+
+      - name: Create report directory
+        run: mkdir -p trivy-reports
+
+      - name: Scan frontend image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.FRONTEND_IMAGE }}
+          format: table
+          vuln-type: 'os,library'
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0"
+      
+      - name: Save frontend report
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.FRONTEND_IMAGE }}
+          format: json
+          output: trivy-reports/frontend.json
+          vuln-type: 'os,library'
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0"
+          skip-setup-trivy: true
+        env:
+          TRIVY_SKIP_DB_UPDATE: "true"
+      
+      - name: scan backend image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.BACKEND_IMAGE }}
+          format: table
+          vuln-type: 'os,library'
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0"
+      
+      - name: Save backend report
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.BACKEND_IMAGE }}
+          format: json
+          output: trivy-reports/backend.json
+          vuln-type: 'os,library'
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0"
+          skip-setup-trivy: true
+        env:
+          TRIVY_SKIP_DB_UPDATE: "true"
+      
+      - name: Scan Nginx image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.NGINX_IMAGE }}
+          format: table
+          vuln-type: 'os,library'
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0"
+
+      - name: Save Nginx report
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.NGINX_IMAGE }}
+          format: json
+          output: trivy-reports/nginx.json
+          vuln-type: 'os,library'
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0"
+          skip-setup-trivy: true
+        env:
+          TRIVY_SKIP_DB_UPDATE: "true"
+        
+      - name: Enforce vulnerability policy
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          reports = [
+              Path("trivy-reports/frontend.json"),
+              Path("trivy-reports/backend.json"),
+              Path("trivy-reports/nginx.json"),
+          ]
+
+          missing = [str(p) for p in reports if not p.is_file()]
+
+          if missing:
+              print("::error::Missing reports: " + ", ".join(missing))
+              sys.exit(1)
+
+          blocking = []
+
+          for path in reports:
+              with path.open(encoding="utf-8") as file:
+                  report = json.load(file)
+
+              count = 0
+
+              for result in report.get("Results") or []:
+                  for vuln in result.get("Vulnerabilities") or []:
+                      severity = vuln.get("Severity", "UNKNOWN")
+
+                      if severity in {"HIGH", "CRITICAL"}:
+                          count += 1
+                          blocking.append((
+                              path.name,
+                              severity,
+                              vuln.get("VulnerabilityID", "unknown"),
+                              vuln.get("PkgName", "unknown"),
+                          ))
+
+              print(
+                  f"{path.name}: "
+                  f"{count} HIGH/CRITICAL finding(s)"
+              )
+
+          if blocking:
+              print(
+                  "::error::Security gate failed: "
+                  "HIGH or CRITICAL vulnerabilities found."
+              )
+
+              for report, severity, vuln_id, package in blocking:
+                  print(
+                      f"{report}: {severity} "
+                      f"{vuln_id} in {package}"
+                  )
+
+              sys.exit(1)
+
+          print(
+              "Security gate passed: "
+              "no HIGH or CRITICAL vulnerabilities found."
+          )
+          PY
+
+      - name: Upload Trivy JSON reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-json-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: trivy-reports/*.json
+          if-no-files-found: warn
+          retention-days: 30

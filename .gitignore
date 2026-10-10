@@ -1,1 +1,23 @@
 example.txt
+.venv
+.env
+
+# Terraform working directory
+.terraform/
+
+# Terraform state
+*.tfstate
+*.tfstate.*
+
+# Saved plans and crash logs
+*.tfplan
+crash.log
+crash.*.log
+
+# Local variable files
+terraform.tfvars
+*.auto.tfvars
+
+# Trivy scan reports
+trivy-reports/
+trivy_reports/

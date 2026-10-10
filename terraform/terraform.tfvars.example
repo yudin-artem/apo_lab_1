@@ -1,0 +1,20 @@
+libvirt_uri = "qemu:///system"
+
+vm_name = "apo_lab_vm"
+storage_pool = "default"
+network_name = "default"
+
+vm_memory_mb = 4096
+vm_vcpu = 2
+vm_disk_size_gib = 20
+
+vm_architecture = "x86_64"
+
+ubuntu_image_url = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+
+vm_user = "ubuntu"
+
+ssh_public_key_path = "~/.ssh/apo_lab_VM.pub"
+ssh_private_key_path = "~/.ssh/apo_lab_VM"
+
+ip_wait_timeout = 300
